@@ -1,88 +1,229 @@
 <?php
-require_once '../includes/functions.php';
-if (!isAdmin()) redirect('../login.php');
+require_once 'includes/functions.php';
 
-$totalProducts = $conn->query("SELECT COUNT(*) as c FROM products")->fetch_assoc()['c'];
-$totalOrders = $conn->query("SELECT COUNT(*) as c FROM orders")->fetch_assoc()['c'];
-$totalRevenue = $conn->query("SELECT SUM(total_amount) as s FROM orders WHERE payment_status='Completed'")->fetch_assoc()['s'] ?? 0;
-$pendingOrders = $conn->query("SELECT COUNT(*) as c FROM orders WHERE order_status='Processing'")->fetch_assoc()['c'];
-$recentOrders = $conn->query("SELECT * FROM orders ORDER BY created_at DESC LIMIT 5");
+// Get filter parameters
+$category = isset($_GET['category']) ? sanitize($_GET['category']) : '';
+$type = isset($_GET['type']) ? sanitize($_GET['type']) : '';
+$search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
+
+// Build query
+$sql = "SELECT * FROM products WHERE 1=1";
+$params = [];
+$types = "";
+
+if ($category) {
+    $sql .= " AND category = ?";
+    $params[] = $category;
+    $types .= "s";
+}
+if ($type) {
+    $sql .= " AND type = ?";
+    $params[] = $type;
+    $types .= "s";
+}
+if ($search) {
+    $sql .= " AND (name LIKE ? OR brand LIKE ? OR description LIKE ?)";
+    $searchTerm = "%$search%";
+    $params[] = $searchTerm;
+    $params[] = $searchTerm;
+    $params[] = $searchTerm;
+    $types .= "sss";
+}
+
+$sql .= " ORDER BY created_at DESC";
+
+$stmt = $conn->prepare($sql);
+if (!empty($params)) {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$products = $stmt->get_result();
+
+// Get unique categories and types for filters
+$categories = $conn->query("SELECT DISTINCT category FROM products ORDER BY category");
+$types_result = $conn->query("SELECT DISTINCT type FROM products ORDER BY type");
+
+// Get cart count
+$cartCount = 0;
+if (isset($_SESSION['cart'])) {
+    foreach ($_SESSION['cart'] as $item) {
+        $cartCount += $item['quantity'];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Fashion Store Admin</title>
-    <link rel="stylesheet" href="../assets/css/admin.css">
+    <title>Fashion Store - Online Clothing Shop</title>
+    <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
-    <div class="admin-wrapper">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2><span>&#128090;</span> Admin</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <a href="index.php" class="active">&#128202; Dashboard</a>
-                <a href="products.php">&#128093; Products</a>
-                <a href="orders.php">&#128230; Orders</a>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <a href="index.php" class="logo">
+                <span>&#128090;</span> Fashion<span>Store</span>
+            </a>
+            <button class="menu-toggle" onclick="document.querySelector('.nav').classList.toggle('active')">&#9776;</button>
+            <nav class="nav">
+                <a href="index.php" class="active">Home</a>
+                <a href="index.php?category=Men">Men</a>
+                <a href="index.php?category=Women">Women</a>
+                <a href="index.php?category=Kids">Kids</a>
             </nav>
-            <div class="sidebar-footer">
-                <a href="logout.php">&#128682; Logout (<?php echo $_SESSION['admin_username']; ?>)</a>
+            <div class="nav-right">
+                <form class="search-bar" action="index.php" method="GET">
+                    <input type="text" name="search" placeholder="Search products..." value="<?php echo htmlspecialchars($search); ?>">
+                    <button type="submit">&#128269;</button>
+                </form>
+                <a href="cart.php" class="cart-icon">
+                    &#128722;
+                    <?php if ($cartCount > 0): ?>
+                    <span class="cart-count"><?php echo $cartCount; ?></span>
+                    <?php endif; ?>
+                </a>
             </div>
-        </aside>
+        </div>
+    </header>
 
-        <main class="main-content">
-            <div class="top-bar">
-                <h1>Dashboard</h1>
-                <div class="user-info">
-                    <div class="user-avatar"><?php echo strtoupper(substr($_SESSION['admin_username'],0,1)); ?></div>
-                </div>
-            </div>
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <h1>Style Meets Comfort</h1>
+            <p>Discover the latest trends in fashion for Men, Women, and Kids. Quality clothing at affordable prices.</p>
+            <a href="#products" class="btn btn-primary btn-lg">Shop Now</a>
+        </div>
+    </section>
 
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon blue">&#128093;</div>
-                    <div class="stat-info"><h3>Products</h3><p><?php echo $totalProducts; ?></p></div>
+    <!-- Filter Section -->
+    <section class="filter-section">
+        <div class="container">
+            <form class="filter-bar" method="GET" action="index.php">
+                <?php if ($search): ?>
+                <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
+                <?php endif; ?>
+                <div class="filter-group">
+                    <label>Category</label>
+                    <select name="category" onchange="this.form.submit()">
+                        <option value="">All Categories</option>
+                        <?php while ($cat = $categories->fetch_assoc()): ?>
+                        <option value="<?php echo $cat['category']; ?>" <?php echo $category == $cat['category'] ? 'selected' : ''; ?>>
+                            <?php echo $cat['category']; ?>
+                        </option>
+                        <?php endwhile; ?>
+                    </select>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon green">&#128230;</div>
-                    <div class="stat-info"><h3>Total Orders</h3><p><?php echo $totalOrders; ?></p></div>
+                <div class="filter-group">
+                    <label>Type</label>
+                    <select name="type" onchange="this.form.submit()">
+                        <option value="">All Types</option>
+                        <?php while ($t = $types_result->fetch_assoc()): ?>
+                        <option value="<?php echo $t['type']; ?>" <?php echo $type == $t['type'] ? 'selected' : ''; ?>>
+                            <?php echo $t['type']; ?>
+                        </option>
+                        <?php endwhile; ?>
+                    </select>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon orange">&#128176;</div>
-                    <div class="stat-info"><h3>Revenue</h3><p>$<?php echo number_format($totalRevenue,2); ?></p></div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon red">&#9200;</div>
-                    <div class="stat-info"><h3>Pending</h3><p><?php echo $pendingOrders; ?></p></div>
-                </div>
-            </div>
+                <?php if ($category || $type || $search): ?>
+                <a href="index.php" class="btn btn-outline btn-sm">Clear Filters</a>
+                <?php endif; ?>
+            </form>
+        </div>
+    </section>
 
-            <div class="card">
-                <div class="card-header"><h2>Recent Orders</h2><a href="orders.php" class="btn btn-sm btn-secondary">View All</a></div>
-                <div class="card-body">
-                    <table class="data-table">
-                        <thead>
-                            <tr><th>Order #</th><th>Customer</th><th>Total</th><th>Status</th><th>Date</th></tr>
-                        </thead>
-                        <tbody>
-                            <?php while ($order = $recentOrders->fetch_assoc()): ?>
-                            <tr>
-                                <td>#<?php echo $order['id']; ?></td>
-                                <td><?php echo htmlspecialchars($order['customer_name']); ?></td>
-                                <td>$<?php echo number_format($order['total_amount'],2); ?></td>
-                                <td><span class="badge badge-<?php echo $order['order_status']=='Processing'?'warning':($order['order_status']=='Delivered'?'success':'info'); ?>"><?php echo $order['order_status']; ?></span></td>
-                                <td><?php echo date('M d, Y', strtotime($order['created_at'])); ?></td>
-                            </tr>
-                            <?php endwhile; ?>
-                        </tbody>
-                    </table>
+    <!-- Products Section -->
+    <section class="products-section" id="products">
+        <div class="container">
+            <?php if ($search): ?>
+            <h2 class="section-title">Search Results for "<?php echo htmlspecialchars($search); ?>"</h2>
+            <?php elseif ($category || $type): ?>
+            <h2 class="section-title">
+                <?php echo $category ? $category . "'s" : "All"; ?> 
+                <?php echo $type ? $type : "Clothing"; ?>
+            </h2>
+            <?php else: ?>
+            <h2 class="section-title">Latest Arrivals</h2>
+            <?php endif; ?>
+
+            <?php flashMessage(); ?>
+
+            <div class="product-grid">
+                <?php if ($products->num_rows > 0): ?>
+                    <?php while ($product = $products->fetch_assoc()): 
+                        $sizes = explode(',', $product['sizes']);
+                    ?>
+                    <div class="product-card fade-in">
+                        <div class="product-image">
+                            <?php if (!empty($product['image']) && file_exists("uploads/" . $product['image'])): ?>
+                                <img src="uploads/<?php echo $product['image']; ?>" alt="<?php echo htmlspecialchars($product['name']); ?>">
+                            <?php else: ?>
+                                <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:4rem;">&#128090;</div>
+                            <?php endif; ?>
+                            <span class="product-badge"><?php echo $product['category']; ?></span>
+                        </div>
+                        <div class="product-info">
+                            <div class="product-brand"><?php echo htmlspecialchars($product['brand']); ?></div>
+                            <h3 class="product-name"><?php echo htmlspecialchars($product['name']); ?></h3>
+                            <div class="product-meta">
+                                <span>&#128308; <?php echo htmlspecialchars($product['color']); ?></span>
+                                <span>&#128230; <?php echo $product['type']; ?></span>
+                            </div>
+                            <div class="product-sizes">
+                                <?php foreach ($sizes as $sz): ?>
+                                <span class="size-option" data-size="<?php echo trim($sz); ?>"><?php echo trim($sz); ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="product-price">$<?php echo number_format($product['price'], 2); ?></div>
+                            <div class="product-actions">
+                                <a href="product.php?id=<?php echo $product['id']; ?>" class="btn btn-outline btn-sm">View</a>
+                                <button class="btn btn-primary btn-sm add-to-cart" data-id="<?php echo $product['id']; ?>" data-size="M">Add to Cart</button>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endwhile; ?>
+                <?php else: ?>
+                    <div style="grid-column:1/-1;text-align:center;padding:var(--space-2xl);">
+                        <p style="font-size:var(--font-size-xl);color:var(--color-text-light);">No products found.</p>
+                        <a href="index.php" class="btn btn-primary" style="margin-top:var(--space-lg);">View All Products</a>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-column">
+                    <h3>About Us</h3>
+                    <p style="color:rgba(255,255,255,0.7);font-size:0.9375rem;line-height:1.7;">Fashion Store is your one-stop destination for trendy and affordable clothing for the whole family.</p>
+                </div>
+                <div class="footer-column">
+                    <h3>Categories</h3>
+                    <a href="index.php?category=Men">Men</a>
+                    <a href="index.php?category=Women">Women</a>
+                    <a href="index.php?category=Kids">Kids</a>
+                </div>
+                <div class="footer-column">
+                    <h3>Customer Service</h3>
+                    <a href="#">Contact Us</a>
+                    <a href="#">Shipping Info</a>
+                    <a href="#">Returns</a>
+                </div>
+                <div class="footer-column">
+                    <h3>Admin</h3>
+                    <a href="login.php">Admin Login</a>
                 </div>
             </div>
-        </main>
-    </div>
-    <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('active')">&#9776;</button>
-    <script src="../assets/js/admin.js"></script>
+            <div class="footer-bottom">
+                <p>&copy; 2026 Fashion Store. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="assets/js/main.js"></script>
 </body>
 </html>
