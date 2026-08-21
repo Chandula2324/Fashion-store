@@ -1,0 +1,13 @@
+# Protect sensitive files
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Disable directory browsing
+Options -Indexes
+
+# Protect includes folder
+RewriteEngine On
+RewriteRule ^includes/ - [F,L]
+RewriteRule ^database/ - [F,L]
